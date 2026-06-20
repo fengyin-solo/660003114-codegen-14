@@ -1,8 +1,18 @@
 <template>
   <div class="min-h-screen bg-slate-900 text-slate-200">
-    <header class="border-b border-slate-700 px-6 py-4">
-      <h1 class="text-2xl font-bold text-cyan-400">正则表达式可视化调试器</h1>
-      <p class="text-sm text-slate-500 mt-1">NFA 状态机可视化 · 逐步匹配高亮 · 分组捕获 · 回溯追踪</p>
+    <header class="border-b border-slate-700 px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+      <div>
+        <h1 class="text-2xl font-bold text-cyan-400">正则表达式可视化调试器</h1>
+        <p class="text-sm text-slate-500 mt-1">NFA 状态机可视化 · 逐步匹配高亮 · 分组捕获 · 回溯追踪</p>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <button @click="showShareModal = true" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white font-bold text-sm flex items-center gap-1">
+          🔗 分享快照
+        </button>
+        <button @click="saveCurrentSnapshot" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-bold text-sm flex items-center gap-1">
+          💾 保存快照
+        </button>
+      </div>
     </header>
 
     <div class="flex flex-col lg:flex-row gap-4 p-4">
@@ -52,19 +62,176 @@
           </div>
           <div v-else class="text-slate-500 text-sm">无步骤数据</div>
         </div>
+
+        <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
+          <h3 class="text-sm font-bold text-slate-400 mb-3 flex items-center justify-between">
+            <span>📋 已保存快照</span>
+            <span class="text-xs text-slate-500">({{ store.snapshots.length }}/20)</span>
+          </h3>
+          <div v-if="store.snapshots.length === 0" class="text-slate-500 text-sm">暂无快照，点击"保存快照"创建</div>
+          <div v-else class="space-y-2 max-h-64 overflow-y-auto">
+            <div v-for="(snap, idx) in store.snapshots" :key="idx" class="bg-slate-900 rounded p-2 text-xs border border-slate-700">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-cyan-400 font-bold truncate">{{ snap.title || '未命名快照' }}</span>
+                <span class="text-slate-500">{{ formatTime(snap.timestamp) }}</span>
+              </div>
+              <div class="text-slate-400 font-mono truncate mb-1">/{{ snap.pattern }}/</div>
+              <div class="text-slate-500 truncate mb-2">测试: {{ snap.testString }}</div>
+              <div class="flex gap-1">
+                <button @click="store.restoreSnapshot(snap)" class="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-500 rounded text-white text-xs">恢复</button>
+                <button @click="copySnapshotUrl(snap)" class="px-2 py-0.5 bg-purple-600 hover:bg-purple-500 rounded text-white text-xs">分享</button>
+                <button @click="store.deleteSnapshot(idx)" class="px-2 py-0.5 bg-red-600 hover:bg-red-500 rounded text-white text-xs">删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
+    </div>
+
+    <div v-if="showShareModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="showShareModal = false">
+      <div class="bg-slate-800 rounded-xl border border-slate-600 p-6 max-w-lg w-full shadow-2xl">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-bold text-cyan-400">🔗 分享调试快照</h2>
+          <button @click="showShareModal = false" class="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
+        </div>
+
+        <div class="mb-4">
+          <label class="block text-sm text-slate-400 mb-1">快照标题（可选）</label>
+          <input v-model="snapshotTitle" type="text" placeholder="为这个快照起个名字..." class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-slate-200 text-sm focus:outline-none focus:border-cyan-500" />
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">分享链接</label>
+            <div class="flex gap-2">
+              <input readonly :value="store.shareUrl || generatedPreviewUrl" type="text" class="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-slate-300 text-xs font-mono focus:outline-none" />
+              <button @click="copyCurrentShareUrl" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white text-sm font-bold whitespace-nowrap">
+                {{ copySuccess ? '✓ 已复制' : '复制链接' }}
+              </button>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">链接包含完整的表达式、测试字符串和当前步骤，打开即可恢复。</p>
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-sm text-slate-400">JSON 快照数据</label>
+              <button @click="copyJsonSnapshot" class="text-xs text-cyan-400 hover:text-cyan-300">复制JSON</button>
+            </div>
+            <textarea readonly :value="jsonSnapshotPreview" rows="6" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-slate-300 text-xs font-mono focus:outline-none resize-none"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">导入 JSON 快照</label>
+            <textarea v-model="importJsonText" rows="3" placeholder="粘贴 JSON 快照数据..." class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-slate-200 text-xs font-mono focus:outline-none focus:border-cyan-500 resize-none"></textarea>
+            <div class="flex gap-2 mt-2">
+              <button @click="importSnapshot" :disabled="!importJsonText.trim()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-lg text-white text-sm font-bold">导入并恢复</button>
+              <button v-if="importError" class="text-xs text-red-400 self-center">{{ importError }}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-5 pt-4 border-t border-slate-700 flex justify-end gap-2">
+          <button @click="showShareModal = false" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white text-sm">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="toast" class="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-600 text-white px-4 py-2 rounded-lg shadow-lg z-50 text-sm">
+      {{ toast }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useRegexStore } from './store/regex'
 import RegexEditor from './components/RegexEditor.vue'
 import NfaVisualizer from './components/NfaVisualizer.vue'
 import MatchHighlight from './components/MatchHighlight.vue'
 import TemplateLibrary from './components/TemplateLibrary.vue'
+import type { DebugSnapshot } from './types'
 
 const store = useRegexStore()
-onMounted(() => store.execute())
+
+const showShareModal = ref(false)
+const snapshotTitle = ref('')
+const copySuccess = ref(false)
+const toast = ref('')
+const importJsonText = ref('')
+const importError = ref('')
+
+const generatedPreviewUrl = computed(() => store.encodeSnapshotToUrl())
+const jsonSnapshotPreview = computed(() => store.exportSnapshotAsJson())
+
+let toastTimer: ReturnType<typeof setTimeout>
+function showToast(msg: string) {
+  toast.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toast.value = '' }, 2000)
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function saveCurrentSnapshot() {
+  store.saveSnapshot(snapshotTitle.value || undefined)
+  snapshotTitle.value = ''
+  showToast('✓ 快照已保存')
+}
+
+async function copyCurrentShareUrl() {
+  const ok = await store.copyShareUrl()
+  copySuccess.value = ok
+  showToast(ok ? '✓ 链接已复制到剪贴板' : '✗ 复制失败')
+  if (ok) setTimeout(() => { copySuccess.value = false }, 2000)
+}
+
+async function copySnapshotUrl(snap: DebugSnapshot) {
+  const ok = await store.copyShareUrl(snap)
+  showToast(ok ? '✓ 分享链接已复制' : '✗ 复制失败')
+}
+
+async function copyJsonSnapshot() {
+  try {
+    await navigator.clipboard.writeText(jsonSnapshotPreview.value)
+    showToast('✓ JSON 已复制')
+  } catch (e) {
+    showToast('✗ 复制失败')
+  }
+}
+
+function importSnapshot() {
+  importError.value = ''
+  const snap = store.importSnapshotFromJson(importJsonText.value)
+  if (snap) {
+    store.restoreSnapshot(snap)
+    importJsonText.value = ''
+    showShareModal.value = false
+    showToast('✓ 快照已恢复')
+  } else {
+    importError.value = '无效的快照数据'
+  }
+}
+
+watch(showShareModal, (v) => {
+  if (!v) {
+    snapshotTitle.value = ''
+    importJsonText.value = ''
+    importError.value = ''
+    copySuccess.value = false
+  }
+})
+
+onMounted(() => {
+  const urlSnap = store.decodeSnapshotFromUrl()
+  if (urlSnap) {
+    store.restoreSnapshot(urlSnap)
+    showToast('✓ 已从链接恢复快照')
+  } else {
+    store.execute()
+  }
+})
 </script>

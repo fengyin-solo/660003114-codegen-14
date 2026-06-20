@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { NFA, MatchResult, MatchStep, RegexTemplate, ASTNode } from '../types'
+import type { NFA, MatchResult, MatchStep, RegexTemplate, ASTNode, DebugSnapshot } from '../types'
 
 const GROUP_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6']
 
@@ -401,8 +401,102 @@ export const useRegexStore = defineStore('regex', () => {
   const ast = ref<ASTNode | null>(null)
   const error = ref('')
   const selectedTemplate = ref<string>('')
+  const snapshots = ref<DebugSnapshot[]>(loadLocalSnapshots())
+  const shareUrl = ref('')
 
   const groupColors = GROUP_COLORS
+
+  function loadLocalSnapshots(): DebugSnapshot[] {
+    try {
+      const raw = localStorage.getItem('regex_debug_snapshots')
+      if (raw) return JSON.parse(raw)
+    } catch (e) {}
+    return []
+  }
+
+  function saveLocalSnapshots() {
+    try {
+      localStorage.setItem('regex_debug_snapshots', JSON.stringify(snapshots.value))
+    } catch (e) {}
+  }
+
+  function createSnapshot(title?: string): DebugSnapshot {
+    const snap: DebugSnapshot = {
+      v: 1,
+      pattern: pattern.value,
+      testString: testString.value,
+      currentStep: currentStep.value,
+      timestamp: Date.now(),
+      title
+    }
+    return snap
+  }
+
+  function saveSnapshot(title?: string) {
+    const snap = createSnapshot(title)
+    snapshots.value.unshift(snap)
+    if (snapshots.value.length > 20) snapshots.value = snapshots.value.slice(0, 20)
+    saveLocalSnapshots()
+    return snap
+  }
+
+  function deleteSnapshot(index: number) {
+    snapshots.value.splice(index, 1)
+    saveLocalSnapshots()
+  }
+
+  function restoreSnapshot(snap: DebugSnapshot) {
+    pattern.value = snap.pattern
+    testString.value = snap.testString
+    execute()
+    const maxStep = (matchResult.value?.steps.length || 1) - 1
+    currentStep.value = Math.min(snap.currentStep, maxStep)
+  }
+
+  function encodeSnapshotToUrl(snap?: DebugSnapshot): string {
+    const s = snap || createSnapshot()
+    const json = JSON.stringify(s)
+    const encoded = btoa(unescape(encodeURIComponent(json)))
+    const url = new URL(window.location.href)
+    url.searchParams.set('snap', encoded)
+    return url.toString()
+  }
+
+  function decodeSnapshotFromUrl(): DebugSnapshot | null {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const encoded = params.get('snap')
+      if (!encoded) return null
+      const json = decodeURIComponent(escape(atob(encoded)))
+      const snap = JSON.parse(json) as DebugSnapshot
+      if (snap && snap.v === 1 && typeof snap.pattern === 'string') return snap
+    } catch (e) {}
+    return null
+  }
+
+  function exportSnapshotAsJson(snap?: DebugSnapshot): string {
+    const s = snap || createSnapshot()
+    return JSON.stringify(s, null, 2)
+  }
+
+  function importSnapshotFromJson(json: string): DebugSnapshot | null {
+    try {
+      const snap = JSON.parse(json) as DebugSnapshot
+      if (snap && snap.v === 1 && typeof snap.pattern === 'string') return snap
+    } catch (e) {}
+    return null
+  }
+
+  async function copyShareUrl(snap?: DebugSnapshot): Promise<boolean> {
+    const url = encodeSnapshotToUrl(snap)
+    shareUrl.value = url
+    try {
+      await navigator.clipboard.writeText(url)
+      return true
+    } catch (e) {
+      return false
+    }
+  }
 
   const matchHighlight = computed(() => {
     if (!matchResult.value || !matchResult.value.matched) return null
@@ -482,7 +576,11 @@ export const useRegexStore = defineStore('regex', () => {
   return {
     pattern, testString, currentStep, isPlaying, nfa, matchResult, ast, error,
     selectedTemplate, groupColors, matchHighlight,
+    snapshots, shareUrl,
     execute, setPattern, setTestString, applyTemplate,
-    stepForward, stepBackward, resetStep, play, stop
+    stepForward, stepBackward, resetStep, play, stop,
+    createSnapshot, saveSnapshot, deleteSnapshot, restoreSnapshot,
+    encodeSnapshotToUrl, decodeSnapshotFromUrl,
+    exportSnapshotAsJson, importSnapshotFromJson, copyShareUrl
   }
 })

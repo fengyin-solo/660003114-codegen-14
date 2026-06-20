@@ -55,3 +55,12 @@ export interface ASTNode {
   children?: ASTNode[]
   groupIndex?: number
 }
+
+export interface DebugSnapshot {
+  v: number
+  pattern: string
+  testString: string
+  currentStep: number
+  timestamp: number
+  title?: string
+}
